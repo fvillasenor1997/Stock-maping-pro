@@ -34,6 +34,7 @@ dependencies:
   path: ^1.9.0 # O la versión más reciente
   file_picker: ^6.2.1 # O la versión más reciente
   csv: ^6.0.0 # O la versión más reciente
+  sqflite_common_ffi: ^2.3.3
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
