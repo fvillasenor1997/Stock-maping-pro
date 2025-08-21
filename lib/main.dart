@@ -1,21 +1,45 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data'; // <-- CORRECCIÓN AQUÍ
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:csv/csv.dart';
+// --- CORRECCIÓN 1: Importar el paquete necesario para SQLite en escritorio ---
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 // --- MODELOS DE DATOS ---
+class Rack {
+  final String rackId; // Nombre del archivo de imagen
+  final String imagePath;
+  final int rows;
+  final int cols;
+
+  Rack({required this.rackId, required this.imagePath, required this.rows, required this.cols});
+
+  Map<String, dynamic> toMap() {
+    return {'rackId': rackId, 'imagePath': imagePath, 'rows': rows, 'cols': cols};
+  }
+
+  factory Rack.fromMap(Map<String, dynamic> map) {
+    return Rack(
+      rackId: map['rackId'],
+      imagePath: map['imagePath'],
+      rows: map['rows'],
+      cols: map['cols'],
+    );
+  }
+}
+
 class InventoryItem {
   int? id;
   final String rackId;
   final int cellIndex;
   String partNumber;
   int quantity;
-  String? description; // Se poblará desde la tabla maestra
+  String? description;
 
   InventoryItem({
     this.id,
@@ -67,7 +91,7 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('corporate_inventory_v2.db');
+    _database = await _initDB('corporate_inventory_v3.db');
     return _database!;
   }
 
@@ -79,12 +103,21 @@ class DatabaseHelper {
 
   Future _createDB(Database db, int version) async {
     await db.execute('''
+    CREATE TABLE racks (
+      rackId TEXT PRIMARY KEY,
+      imagePath TEXT NOT NULL,
+      rows INTEGER NOT NULL,
+      cols INTEGER NOT NULL
+    )
+    ''');
+    await db.execute('''
     CREATE TABLE items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       rackId TEXT NOT NULL,
       cellIndex INTEGER NOT NULL,
       partNumber TEXT NOT NULL,
-      quantity INTEGER NOT NULL
+      quantity INTEGER NOT NULL,
+      FOREIGN KEY (rackId) REFERENCES racks (rackId) ON DELETE CASCADE
     )
     ''');
     await db.execute('''
@@ -93,6 +126,18 @@ class DatabaseHelper {
       description TEXT NOT NULL
     )
     ''');
+  }
+
+  // --- Operaciones con Racks ---
+  Future<void> createRack(Rack rack) async {
+    final db = await instance.database;
+    await db.insert('racks', rack.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Rack>> getAllRacks() async {
+    final db = await instance.database;
+    final result = await db.query('racks', orderBy: 'rackId');
+    return result.map((map) => Rack.fromMap(map)).toList();
   }
 
   // --- Operaciones con Items ---
@@ -123,12 +168,6 @@ class DatabaseHelper {
     return await db.delete('items', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<List<String>> getDistinctRackIds() async {
-    final db = await instance.database;
-    final result = await db.rawQuery('SELECT DISTINCT rackId FROM items ORDER BY rackId');
-    return result.map((map) => map['rackId'] as String).toList();
-  }
-
   // --- Operaciones con Maestro de Partes ---
   Future<String?> getPartDescription(String partNumber) async {
     final db = await instance.database;
@@ -149,7 +188,6 @@ class DatabaseHelper {
     final batch = db.batch();
     int count = 0;
     
-    // Asume que la primera fila es el encabezado y la ignora
     for (var i = 1; i < rows.length; i++) {
       final row = rows[i];
       if (row.length >= 2) {
@@ -166,6 +204,12 @@ class DatabaseHelper {
 
 // --- PUNTO DE ENTRADA DE LA APP ---
 void main() {
+  // --- CORRECCIÓN 1: Inicializar la base de datos para escritorio ---
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
+  
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
@@ -176,11 +220,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Gestor de Inventario Corporativo',
-      theme: ThemeData(
-        primarySwatch: Colors.indigo,
+      // --- CORRECCIÓN 2: Forma más robusta de definir el tema ---
+      theme: ThemeData.light(useMaterial3: true).copyWith(
+        primaryColor: Colors.indigo,
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
-        useMaterial3: true,
-        fontFamily: 'Inter',
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
           elevation: 1,
@@ -220,18 +263,35 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late Future<List<String>> _racksFuture;
+  late Future<List<Rack>> _racksFuture;
 
   @override
   void initState() {
     super.initState();
-    _racksFuture = DatabaseHelper.instance.getDistinctRackIds();
+    _refreshRacks();
   }
 
   void _refreshRacks() {
     setState(() {
-      _racksFuture = DatabaseHelper.instance.getDistinctRackIds();
+      _racksFuture = DatabaseHelper.instance.getAllRacks();
     });
+  }
+
+  Future<void> _openRack(Rack rack) async {
+    final imageFile = File(rack.imagePath);
+    if (await imageFile.exists()) {
+      final imageBytes = await imageFile.readAsBytes();
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => InventoryManagerPage(rack: rack, imageBytes: imageBytes),
+        ),
+      );
+      _refreshRacks();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: No se encontró la imagen en ${rack.imagePath}')),
+      );
+    }
   }
 
   Future<void> _loadNewRack() async {
@@ -239,17 +299,22 @@ class _HomePageState extends State<HomePage> {
     if (result != null && result.files.single.path != null) {
       final file = File(result.files.single.path!);
       final rackId = p.basename(file.path);
-      final imageBytes = await file.readAsBytes();
       
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => InventoryManagerPage(
-            rackId: rackId,
-            imageBytes: imageBytes,
-          ),
-        ),
+      final dimensions = await showDialog<Map<String, int>>(
+        context: context,
+        builder: (context) => const RackDimensionsDialog(),
       );
-      _refreshRacks();
+
+      if (dimensions != null) {
+        final newRack = Rack(
+          rackId: rackId,
+          imagePath: file.path,
+          rows: dimensions['rows']!,
+          cols: dimensions['cols']!,
+        );
+        await DatabaseHelper.instance.createRack(newRack);
+        _openRack(newRack);
+      }
     }
   }
 
@@ -261,11 +326,9 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (context) => const SettingsPage()),
-              );
-            },
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => const SettingsPage()),
+            ),
           ),
         ],
       ),
@@ -287,7 +350,7 @@ class _HomePageState extends State<HomePage> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
             const SizedBox(height: 16),
             Expanded(
-              child: FutureBuilder<List<String>>(
+              child: FutureBuilder<List<Rack>>(
                 future: _racksFuture,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
@@ -300,21 +363,14 @@ class _HomePageState extends State<HomePage> {
                   return ListView.builder(
                     itemCount: racks.length,
                     itemBuilder: (context, index) {
-                      final rackId = racks[index];
+                      final rack = racks[index];
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 6),
                         child: ListTile(
                           leading: const Icon(Icons.grid_on, color: Colors.indigo),
-                          title: Text(rackId, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          title: Text(rack.rackId, style: const TextStyle(fontWeight: FontWeight.bold)),
                           trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            // Nota: Para abrir un rack existente, necesitaríamos guardar
-                            // la ruta de la imagen o mostrar un placeholder.
-                            // Por simplicidad, esta acción está pendiente.
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Funcionalidad para abrir "${rackId}" pendiente.')),
-                            );
-                          },
+                          onTap: () => _openRack(rack),
                         ),
                       );
                     },
@@ -332,20 +388,18 @@ class _HomePageState extends State<HomePage> {
 
 // --- PANTALLA DE GESTIÓN DE INVENTARIO ---
 class InventoryManagerPage extends StatefulWidget {
-  final String rackId;
+  final Rack rack;
   final Uint8List imageBytes;
 
-  const InventoryManagerPage({super.key, required this.rackId, required this.imageBytes});
+  const InventoryManagerPage({super.key, required this.rack, required this.imageBytes});
 
   @override
   State<InventoryManagerPage> createState() => _InventoryManagerPageState();
 }
 
 class _InventoryManagerPageState extends State<InventoryManagerPage> {
-  final TextEditingController _rowsController = TextEditingController(text: '3');
-  final TextEditingController _colsController = TextEditingController(text: '4');
   Map<int, List<InventoryItem>> _inventory = {};
-  bool _isLoading = false;
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -355,7 +409,7 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
 
   Future<void> _loadInventory() async {
     setState(() { _isLoading = true; });
-    final allItems = await DatabaseHelper.instance.getItemsForRack(widget.rackId);
+    final allItems = await DatabaseHelper.instance.getItemsForRack(widget.rack.rackId);
     setState(() {
       _inventory = allItems;
       _isLoading = false;
@@ -367,7 +421,7 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
       context: context,
       builder: (BuildContext context) => CellInventoryDialog(
         cellIndex: cellIndex,
-        rackId: widget.rackId,
+        rackId: widget.rack.rackId,
       ),
     );
     if (result == true) {
@@ -378,7 +432,7 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Gestionando: ${widget.rackId}')),
+      appBar: AppBar(title: Text('Gestionando: ${widget.rack.rackId}')),
       body: Row(
         children: [
           SizedBox(width: 350, child: _buildControlPanel()),
@@ -396,20 +450,24 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Configuración de la Cuadrícula", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          const Text("Información del Rack", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
           const Divider(height: 24),
-          TextField(
-            controller: _rowsController,
-            decoration: const InputDecoration(labelText: 'Número de Filas', border: OutlineInputBorder()),
-            keyboardType: TextInputType.number,
-            onChanged: (_) => setState(() {}),
+          Text.rich(
+            TextSpan(
+              children: [
+                const TextSpan(text: 'ID: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                TextSpan(text: widget.rack.rackId),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _colsController,
-            decoration: const InputDecoration(labelText: 'Número de Columnas', border: OutlineInputBorder()),
-            keyboardType: TextInputType.number,
-            onChanged: (_) => setState(() {}),
+          Text.rich(
+            TextSpan(
+              children: [
+                const TextSpan(text: 'Dimensiones: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                TextSpan(text: '${widget.rack.rows} filas x ${widget.rack.cols} columnas'),
+              ],
+            ),
           ),
         ],
       ),
@@ -435,13 +493,12 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
   }
 
   Widget _buildInteractiveGrid() {
-    final int rows = int.tryParse(_rowsController.text) ?? 1;
-    final int cols = int.tryParse(_colsController.text) ?? 1;
-
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: cols),
-      itemCount: rows * cols,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: widget.rack.cols,
+      ),
+      itemCount: widget.rack.rows * widget.rack.cols,
       itemBuilder: (context, index) {
         final itemsInCell = _inventory[index] ?? [];
         final totalQuantity = itemsInCell.fold<int>(0, (sum, item) => sum + item.quantity);
@@ -537,6 +594,74 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+// --- DIÁLOGO PARA DEFINIR DIMENSIONES DEL RACK ---
+class RackDimensionsDialog extends StatefulWidget {
+  const RackDimensionsDialog({super.key});
+
+  @override
+  State<RackDimensionsDialog> createState() => _RackDimensionsDialogState();
+}
+
+class _RackDimensionsDialogState extends State<RackDimensionsDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _rowsController = TextEditingController(text: '3');
+  final _colsController = TextEditingController(text: '4');
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Definir Dimensiones del Rack'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _rowsController,
+              decoration: const InputDecoration(labelText: 'Número de Filas', border: OutlineInputBorder()),
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value == null || int.tryParse(value) == null || int.parse(value) < 1) {
+                  return 'Debe ser un número mayor a 0';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _colsController,
+              decoration: const InputDecoration(labelText: 'Número de Columnas', border: OutlineInputBorder()),
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value == null || int.tryParse(value) == null || int.parse(value) < 1) {
+                  return 'Debe ser un número mayor a 0';
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+        ElevatedButton(
+          onPressed: () {
+            if (_formKey.currentState!.validate()) {
+              final result = {
+                'rows': int.parse(_rowsController.text),
+                'cols': int.parse(_colsController.text),
+              };
+              Navigator.of(context).pop(result);
+            }
+          },
+          child: const Text('Confirmar'),
+        ),
+      ],
     );
   }
 }
