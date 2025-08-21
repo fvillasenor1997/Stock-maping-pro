@@ -309,7 +309,6 @@ class MyApp extends StatelessWidget {
           titleTextStyle: TextStyle(color: Color(0xFF1A2533), fontSize: 20, fontWeight: FontWeight.bold),
           iconTheme: IconThemeData(color: Color(0xFF1A2533)),
         ),
-        // --- CORRECCIÓN AQUÍ ---
         cardTheme: const CardThemeData(
           elevation: 0,
           shape: RoundedRectangleBorder(
@@ -356,7 +355,7 @@ class _LoginPageState extends State<LoginPage> {
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Número de empleado no encontrado.'), backgroundColor: Colors.red),
+        SnackBar(content: const Text('Número de empleado no encontrado.'), backgroundColor: Colors.red),
       );
     }
   }
@@ -652,7 +651,7 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
             if (passwordController.text == storedPassword) {
               Navigator.of(context).pop(true);
             } else {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clave incorrecta'), backgroundColor: Colors.red));
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('Clave incorrecta'), backgroundColor: Colors.red));
             }
           }, child: const Text('Confirmar')),
         ],
@@ -666,7 +665,7 @@ class _InventoryManagerPageState extends State<InventoryManagerPage> {
   void _saveLayout() async {
     await DatabaseHelper.instance.updateRackLayout(widget.rack.rackId, _currentLayout);
     setState(() { _isEditingLayout = false; });
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plantilla guardada'), backgroundColor: Colors.green));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('Plantilla guardada'), backgroundColor: Colors.green));
   }
 
   @override
@@ -1146,11 +1145,11 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
     if (_formKey.currentState!.validate()) {
       final currentPassword = await SettingsService.getEditPassword();
       if (_currentPasswordController.text != currentPassword) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La clave actual es incorrecta.'), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('La clave actual es incorrecta.'), backgroundColor: Colors.red));
         return;
       }
       await SettingsService.setEditPassword(_newPasswordController.text);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Clave actualizada con éxito.'), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: const Text('Clave actualizada con éxito.'), backgroundColor: Colors.green));
       Navigator.of(context).pop();
     }
   }
