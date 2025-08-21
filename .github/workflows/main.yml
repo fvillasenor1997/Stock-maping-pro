@@ -11,13 +11,25 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
     
+    # OPCIÓN 1: Usar el canal stable (RECOMENDADO)
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: 'stable'
-        channel: 'stable'
+        channel: 'stable'  # Solo especifica el canal
+        # NO uses flutter-version cuando especificas channel
+    
+    # OPCIÓN 2: Si prefieres una versión específica de Flutter
+    # - name: Setup Flutter (Versión específica)
+    #   uses: subosito/flutter-action@v2
+    #   with:
+    #     flutter-version: '3.19.0'  # Especifica una versión exacta
+    #     # NO uses channel cuando especificas flutter-version
+    
+    - name: Check Flutter version
+      run: flutter --version
     
     - name: Install dependencies
       run: flutter pub get
@@ -25,24 +37,21 @@ jobs:
     - name: Build Windows Release
       run: flutter build windows --release
     
-    # Opción 1: Subir desde la ruta correcta (x64)
     - name: Upload Windows Build
       uses: actions/upload-artifact@v4
       with:
         name: windows-release
         path: build/windows/x64/runner/Release/
-        
-    # Opción 2: Alternativa - Subir toda la carpeta de build si quieres incluir todo
-    # - name: Upload Windows Build (Complete)
-    #   uses: actions/upload-artifact@v4
-    #   with:
-    #     name: windows-release-complete
-    #     path: build/windows/x64/runner/
-        
-    # Opción 3: Para debugging - Ver qué archivos se generaron
-    - name: List build contents (for debugging)
-      if: always()
+        if-no-files-found: error  # Falla si no encuentra archivos
+    
+    # Opcional: Para debugging
+    - name: List build contents (debugging)
+      if: failure()  # Solo se ejecuta si falla algo
       run: |
-        echo "Contents of build/windows:"
-        dir build\windows\ /s /b
-      shell: cmd
+        echo "=== Checking build directory structure ==="
+        if (Test-Path "build\windows") {
+          Get-ChildItem -Path "build\windows" -Recurse | Select-Object FullName
+        } else {
+          echo "build\windows directory does not exist"
+        }
+      shell: powershell
