@@ -230,7 +230,7 @@ class MyApp extends StatelessWidget {
           titleTextStyle: TextStyle(color: Color(0xFF1A2533), fontSize: 20, fontWeight: FontWeight.bold),
           iconTheme: IconThemeData(color: Color(0xFF1A2533)),
         ),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
