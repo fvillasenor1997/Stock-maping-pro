@@ -1,0 +1,53 @@
+# Nombre del workflow que aparecerá en la pestaña "Actions" de GitHub
+name: Compilar para Windows
+
+# Define cuándo se ejecutará este workflow
+on:
+  # Se activa cada vez que haces un "push" a la rama "main"
+  push:
+    branches: [ "main" ]
+  # También permite ejecutarlo manualmente desde la pestaña Actions
+  workflow_dispatch:
+
+# Define los trabajos (jobs) que se ejecutarán
+jobs:
+  # Nombre del trabajo
+  build-windows:
+    # Especifica que este trabajo debe correr en una máquina virtual de Windows
+    runs-on: windows-latest
+
+    # Define los pasos que se ejecutarán en orden
+    steps:
+      # 1. Clona tu repositorio en la máquina virtual
+      - name: Clonar el repositorio
+        uses: actions/checkout@v4
+
+      # 2. Configura el entorno de Flutter
+      # Esta es una acción de la comunidad que instala el SDK de Flutter
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable' # Usa la versión estable de Flutter
+
+      # 3. Habilita el soporte para escritorio de Windows
+      - name: Habilitar compilación para Windows
+        run: flutter config --enable-windows-desktop
+
+      # 4. Instala las dependencias del proyecto
+      - name: Instalar dependencias
+        run: flutter pub get
+
+      # 5. Compila la aplicación en modo "release" para Windows
+      # Este es el comando que crea el .exe optimizado
+      - name: Compilar el ejecutable de Windows
+        run: flutter build windows --release
+
+      # 6. Sube el resultado como un "artefacto"
+      # Esto empaqueta la carpeta "Release" para que puedas descargarla
+      - name: Subir el artefacto de la compilación
+        uses: actions/upload-artifact@v4
+        with:
+          # Nombre del archivo .zip que podrás descargar
+          name: windows-build
+          # Ruta a la carpeta que contiene el .exe y todos los archivos necesarios
+          path: build/windows/runner/Release
